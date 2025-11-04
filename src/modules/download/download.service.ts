@@ -16,8 +16,7 @@ export class DownloadService {
     private platformService: PlatformService,
   ) {}
 
-  async downloadMedia(url: string, quality?: string): Promise<DownloadResult[]> {
-    const platform = this.platformService.detectPlatform(url);
+  async downloadMedia(url: string, platform: string | undefined, quality?: string): Promise<DownloadResult[]> {
 
     this.logger.log(`Downloading ${platform || 'generic'} media: ${url}`);
 

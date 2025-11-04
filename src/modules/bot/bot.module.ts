@@ -18,6 +18,7 @@ import { MessageHandler } from './handlers/message.handler';
 
 // Services
 import { MediaSender } from './services/media-sender.service';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
   imports: [
@@ -27,6 +28,8 @@ import { MediaSender } from './services/media-sender.service';
     PlatformModule,
     DownloadModule,
     StorageModule,
+
+    QueueModule
   ],
   providers: [
     BotService,

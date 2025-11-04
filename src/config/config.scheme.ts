@@ -17,5 +17,9 @@ export const configValidationSchema = Joi.object({
   // File Configuration
   MAX_FILE_SIZE: Joi.number().default(50 * 1024 * 1024), // 50MB
   DOWNLOAD_DIR: Joi.string().default('downloads'),
+
+  REDIS_HOST: Joi.string().default('localhost'),
+  REDIS_PORT: Joi.number().default(6379),
+  REDIS_PASSWORD: Joi.string().allow('').optional(),
 });
 

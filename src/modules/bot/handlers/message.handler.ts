@@ -8,6 +8,9 @@ import { StorageService } from '../../storage/storage.service';
 import { YoutubeKeyboard } from '../keyboards/youtube.keyboard';
 import * as crypto from 'crypto';
 import { MediaSender } from '../services/media-sender.service';
+import { QueueService } from '../../queue/queue.service';
+import { InjectQueue } from '@nestjs/bull';
+import bull from 'bull';
 
 @Injectable()
 export class MessageHandler {
@@ -21,6 +24,8 @@ export class MessageHandler {
     private userService: UserService,
     private storageService: StorageService,
     private mediaSender: MediaSender,
+    private queueService: QueueService,
+    @InjectQueue('download') private downloadQueue: bull.Queue,
   ) {}
 
   async handleText(ctx: Context): Promise<void> {
@@ -59,11 +64,10 @@ export class MessageHandler {
     ctx: Context,
     url: string,
     platform: string,
-    quality?: string
+    quality?: string,
   ): Promise<void> {
     const userId = ctx.from?.id!;
 
-    // Check cache for single media
     const cached = await this.cacheService.getCachedMedia(url, quality);
     if (cached?.file_id) {
       this.logger.log(`Sending cached ${platform} media`);
@@ -100,79 +104,47 @@ export class MessageHandler {
     url: string,
     platform: string,
     quality: string | undefined,
-    userId: number
+    userId: number,
   ): Promise<void> {
-    const statusMsg = await ctx.reply('⬇️ Downloading media...');
+    const statusMsg = await ctx.reply('⬇️ Adding to download queue...');
 
     try {
-      const results = await this.downloadService.downloadMedia(url, quality);
+      // ✅ Add job to the queue instead of directly downloading
+      const job = await this.queueService.addDownloadJob({
+        url,
+        platform,
+        quality,
+        userId,
+        chatId: ctx.chat!.id,
+        messageId: statusMsg.message_id,
+      });
 
-      if (results.length === 0) {
-        await ctx.api.editMessageText(
-          ctx.chat!.id,
-          statusMsg.message_id,
-          '❌ No media found in this link.'
-        );
-        return;
-      }
-
-      // Handle album/multiple files
-      if (results.length > 1) {
-        await ctx.api.editMessageText(
-          ctx.chat!.id,
-          statusMsg.message_id,
-          `📸 Downloading album with ${results.length} items...`
-        );
-      } else {
-        await ctx.api.editMessageText(
-          ctx.chat!.id,
-          statusMsg.message_id,
-          '⬆️ Uploading to Telegram...'
-        );
-      }
-
-      const mediaGroupId = results.length > 1 ? crypto.randomUUID() : undefined;
-
-      for (const result of results) {
-        // Check file size
-        const fileSize = this.storageService.getFileSize(result.filePath);
-        if (fileSize > this.MAX_FILE_SIZE) {
-          await ctx.reply('❌ File is too large (>50MB). Telegram has a file size limit.');
-          this.storageService.deleteFile(result.filePath);
-          continue;
+      // ✅ Handle job completion
+      job.finished().then(async (result) => {
+        if (result.success) {
+          await this.handleJobSuccess(
+            ctx,
+            result,
+            url,
+            platform,
+            quality,
+            userId,
+            statusMsg,
+          );
+        } else {
+          await ctx.api.editMessageText(
+            ctx.chat!.id,
+            statusMsg.message_id,
+            `❌ Error: ${result.error}`,
+          );
         }
-
-        const message = await this.mediaSender.sendMedia(ctx, result, platform);
-
-        if (message) {
-          const fileId = this.mediaSender.getFileId(message);
-          const fileType = this.mediaSender.getFileType(message);
-
-          if (fileId) {
-            await this.cacheService.saveMedia({
-              url,
-              platform,
-              quality,
-              file_id: fileId,
-              file_type: fileType,
-              media_group_id: mediaGroupId,
-              title: result.title,
-            });
-          }
-        }
-
-        this.storageService.deleteFile(result.filePath);
-      }
-
-      await this.userService.incrementDownloads(userId);
-      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id);
+      });
     } catch (error) {
-      this.logger.error('Download error:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to add job:', error);
       await ctx.api.editMessageText(
         ctx.chat!.id,
         statusMsg.message_id,
-        `❌ Error: ${errorMsg}\n\nPlease try again or contact support.`
+        `❌ Failed to add job: ${error.message || error}`,
       );
     }
   }
@@ -190,5 +162,58 @@ export class MessageHandler {
     await ctx.deleteMessage();
 
     await this.processDownload(ctx, url, 'youtube', quality);
+  }
+
+  private async handleJobSuccess(
+    ctx: Context,
+    result: any,
+    url: string,
+    platform: string,
+    quality: string | undefined,
+    userId: number,
+    statusMsg: any,
+  ): Promise<void> {
+    const { results } = result;
+
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      statusMsg.message_id,
+      '⬆️ Uploading to Telegram...',
+    );
+
+    const mediaGroupId = results.length > 1 ? crypto.randomUUID() : undefined;
+
+    for (const item of results) {
+      const fileSize = this.storageService.getFileSize(item.filePath);
+      if (fileSize > this.MAX_FILE_SIZE) {
+        await ctx.reply('❌ File too large (>50MB). Skipping...');
+        this.storageService.deleteFile(item.filePath);
+        continue;
+      }
+
+      const message = await this.mediaSender.sendMedia(ctx, item, platform);
+
+      if (message) {
+        const fileId = this.mediaSender.getFileId(message);
+        const fileType = this.mediaSender.getFileType(message);
+
+        if (fileId) {
+          await this.cacheService.saveMedia({
+            url,
+            platform,
+            quality,
+            file_id: fileId,
+            file_type: fileType,
+            media_group_id: mediaGroupId,
+            title: item.title,
+          });
+        }
+      }
+
+      this.storageService.deleteFile(item.filePath);
+    }
+
+    await this.userService.incrementDownloads(userId);
+    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id);
   }
 }
