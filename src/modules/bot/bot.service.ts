@@ -9,16 +9,21 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private isStarted = false;
 
   constructor(private config: ConfigService) {
-    this.bot = new Bot(this.config.get('BOT_TOKEN'));
+    const token = this.config.get('BOT_TOKEN');
 
-    // Error handler
+    if (!token) {
+      this.logger.error('BOT_TOKEN is not defined in environment variables!');
+      throw new Error('BOT_TOKEN is required');
+    }
+
+    this.bot = new Bot(token);
+
     this.bot.catch((err) => {
       this.logger.error('Bot error:', err);
     });
   }
 
   async onModuleInit() {
-    // Don't start yet, wait for handlers to be registered
     this.logger.log('🤖 Bot service initialized');
   }
 
@@ -33,9 +38,24 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log('🚀 Starting Telegram bot...');
-    await this.bot.start();
-    this.isStarted = true;
-    this.logger.log('✅ Telegram bot started successfully!');
+
+    try {
+      const me = await this.bot.api.getMe();
+      this.logger.log(`✅ Bot authenticated as: ${me.username} (${me.id})`);
+
+      this.bot.start().then(() => {
+        this.logger.log('Bot start promise resolved (unexpected)');
+      }).catch(error => {
+        this.logger.error('Bot start failed:', error);
+      });
+
+      this.isStarted = true;
+      this.logger.log('✅ Telegram bot started successfully and is listening for messages!');
+
+    } catch (error) {
+      this.logger.error('❌ Failed to start Telegram bot:', error);
+      throw error;
+    }
   }
 
   async onModuleDestroy() {
@@ -43,6 +63,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('🛑 Shutting down bot...');
       await this.bot.stop();
       this.isStarted = false;
+      this.logger.log('✅ Bot stopped successfully');
     }
   }
 }

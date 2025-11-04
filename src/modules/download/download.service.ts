@@ -16,17 +16,8 @@ export class DownloadService {
     private platformService: PlatformService,
   ) {}
 
-  async downloadMedia(
-    url: string,
-    platform: string | undefined,
-    quality?: string,
-  ): Promise<DownloadResult[]> {
-    this.logger.log(
-      `Starting download for ${platform || 'generic'} media: ${url}`,
-    );
-    this.logger.debug(
-      `Download parameters - URL: ${url}, Platform: ${platform}, Quality: ${quality}`,
-    );
+  async downloadMedia(url: string, platform: string | undefined, quality?: string): Promise<DownloadResult[]> {
+    this.logger.log(`Starting download for ${platform || 'generic'} media: ${url}`);
 
     try {
       let results: DownloadResult[];
@@ -45,18 +36,11 @@ export class DownloadService {
         results = await this.genericStrategy.download(url);
       }
 
-      this.logger.log(
-        `Download completed successfully. Files downloaded: ${results.length}`,
-      );
-      this.logger.debug(
-        `Download results: ${JSON.stringify(results.map((r) => r.filePath))}`,
-      );
-
+      this.logger.log(`Download completed successfully. Files downloaded: ${results.length}`);
       return results;
     } catch (error) {
       this.logger.error(`Download failed for ${url}:`, error);
-      this.logger.error(`Error stack: ${error.stack}`);
-      throw error; // Re-throw for processor to handle
+      throw error;
     }
   }
 

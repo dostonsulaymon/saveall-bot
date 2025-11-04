@@ -6,7 +6,7 @@ import { YoutubeDownloadStrategy } from './strategies/youtube.strategy';
 import { InstagramDownloadStrategy } from './strategies/instagram.strategy';
 import { StorageModule } from '../storage/storage.module';
 import { PlatformModule } from '../platform/platform.module';
-import { DownloadProcessor } from './download.processor';
+import { DownloadProcessor } from './strategies/download.processor';
 
 @Module({
   imports: [

@@ -24,11 +24,16 @@ import { QueueService } from './queue.service';
             delay: 3000,
           },
         },
+        settings: {
+          maxStalledCount: 2,
+          retryProcessDelay: 5000,
+        },
       }),
     }),
 
     BullModule.registerQueue({
       name: 'download',
+
     }),
   ],
   providers: [QueueService],

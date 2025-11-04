@@ -12,9 +12,10 @@ export class GenericDownloadStrategy {
   constructor(private storageService: StorageService) {}
 
   async download(url: string, options: string[] = []): Promise<DownloadResult[]> {
+    const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     const outputTemplate = path.join(
       this.storageService.getDownloadDir(),
-      '%(title).100s.%(ext)s'
+      `%(title).100s-${uniqueId}.%(ext)s`
     );
 
     return new Promise((resolve, reject) => {
@@ -28,7 +29,7 @@ export class GenericDownloadStrategy {
         url,
       ];
 
-      this.logger.log(`Executing yt-dlp: ${args.join(' ')}`);
+      this.logger.log(`Executing yt-dlp for ${uniqueId}: ${args.join(' ')}`);
 
       const proc = spawn('yt-dlp', args);
       let stderr = '';
@@ -36,7 +37,7 @@ export class GenericDownloadStrategy {
 
       proc.stdout.on('data', (data) => {
         const output = data.toString();
-        this.logger.debug(output);
+        this.logger.debug(`[${uniqueId}] ${output}`);
 
         const destMatch = output.match(/\[download\] Destination: (.+)/);
         if (destMatch) {
@@ -59,9 +60,7 @@ export class GenericDownloadStrategy {
       proc.on('close', (code) => {
         if (code !== 0) {
           const errorMsg = this.parseError(stderr);
-          this.logger.error(`On generic download failed: ${errorMsg}`);
-
-
+          this.logger.error(`Download ${uniqueId} failed: ${errorMsg}`);
           reject(new Error(errorMsg));
           return;
         }
@@ -69,7 +68,7 @@ export class GenericDownloadStrategy {
         let files = downloadedFiles.filter(f => this.storageService.fileExists(f));
 
         if (files.length === 0) {
-          files = this.getLatestFiles();
+          files = this.getLatestFiles(uniqueId);
         }
 
         if (files.length === 0) {
@@ -83,6 +82,7 @@ export class GenericDownloadStrategy {
           isImage: this.storageService.isImageFile(filePath),
         }));
 
+        this.logger.log(`Download ${uniqueId} completed with ${results.length} files`);
         resolve(results);
       });
     });
@@ -101,10 +101,10 @@ export class GenericDownloadStrategy {
     return '❌ Something went wrong while downloading. Please try again later.';
   }
 
-  private getLatestFiles(): string[] {
+  private getLatestFiles(uniqueId: string): string[] {
     const downloadDir = this.storageService.getDownloadDir();
     return fs.readdirSync(downloadDir)
-      .filter(f => !f.startsWith('.') && !f.endsWith('.json'))
+      .filter(f => !f.startsWith('.') && !f.endsWith('.json') && f.includes(uniqueId))
       .map(f => path.join(downloadDir, f))
       .filter(f => fs.statSync(f).isFile())
       .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
