@@ -1,14 +1,20 @@
 import { Injectable } from '@nestjs/common';
+import { GenericDownloadStrategy } from './generic.strategy';
+import { DownloadResult } from '../dto/download-job.dto';
 
 @Injectable()
-export class InstagramStrategy {
-  // Minimal stub; determine if URL is an Instagram link
-  canHandle(url: string): boolean {
-    return /instagram\.com\//i.test(url);
-  }
+export class InstagramDownloadStrategy {
+  constructor(private genericStrategy: GenericDownloadStrategy) {}
 
-  async download(_url: string): Promise<Buffer> {
-    // Placeholder - returns empty buffer
-    return Buffer.from('');
+  async download(url: string): Promise<DownloadResult[]> {
+    const options = [
+      '--write-all-thumbnails',
+      '--no-playlist',
+      '--retries', '3',
+      '--fragment-retries', '3',
+      '--write-info-json',
+    ];
+
+    return this.genericStrategy.download(url, options);
   }
 }
