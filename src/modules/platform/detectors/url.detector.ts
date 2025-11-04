@@ -29,7 +29,8 @@ export class UrlDetector {
   }
 
   extractYouTubeId(url: string): string | null {
-    const regex = /(?:v=|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+    // Updated regex to handle all YouTube URL formats including Shorts
+    const regex = /(?:youtube\.com\/(?:shorts\/|watch\?v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
     const match = url.match(regex);
     return match ? match[1] : null;
   }

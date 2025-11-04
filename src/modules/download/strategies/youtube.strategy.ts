@@ -13,6 +13,10 @@ export class YoutubeDownloadStrategy {
       '--merge-output-format', 'mp4',
     ];
 
+    if (url.includes('/shorts/')) {
+      this.ensureShortsCompatibility(options);
+    }
+
     if (quality === 'audio') {
       options.push(
         '--extract-audio',
@@ -34,5 +38,11 @@ export class YoutubeDownloadStrategy {
       'audio': 'bestaudio[ext=m4a]/bestaudio',
     };
     return formats[quality] || formats['best'];
+  }
+
+  private ensureShortsCompatibility(options: string[]): void {
+    if (!options.includes('--extract-audio')) {
+      options.push('--format', 'best[ext=mp4]');
+    }
   }
 }

@@ -37,7 +37,6 @@ async function bootstrap() {
 
   logger.log(`🚀 Application is running on: http://localhost:${port}`);
   logger.log(`📊 Bull Board: http://localhost:${port}/admin/queues`);
-  logger.log(`🤖 Telegram bot is starting...`);
 }
 
 bootstrap();
