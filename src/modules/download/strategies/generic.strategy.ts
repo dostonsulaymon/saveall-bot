@@ -59,6 +59,9 @@ export class GenericDownloadStrategy {
       proc.on('close', (code) => {
         if (code !== 0) {
           const errorMsg = this.parseError(stderr);
+          this.logger.error(`On generic download failed: ${errorMsg}`);
+
+
           reject(new Error(errorMsg));
           return;
         }

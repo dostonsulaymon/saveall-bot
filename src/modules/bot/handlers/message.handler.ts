@@ -11,6 +11,7 @@ import { MediaSender } from '../services/media-sender.service';
 import { QueueService } from '../../queue/queue.service';
 import { InjectQueue } from '@nestjs/bull';
 import bull from 'bull';
+import { DownloadJobResult } from '../../download/dto/download-job.dto';
 
 @Injectable()
 export class MessageHandler {
@@ -109,7 +110,7 @@ export class MessageHandler {
     const statusMsg = await ctx.reply('⬇️ Adding to download queue...');
 
     try {
-      // ✅ Add job to the queue instead of directly downloading
+      // Add job to the queue
       const job = await this.queueService.addDownloadJob({
         url,
         platform,
@@ -119,32 +120,52 @@ export class MessageHandler {
         messageId: statusMsg.message_id,
       });
 
-      // ✅ Handle job completion
-      job.finished().then(async (result) => {
-        if (result.success) {
-          await this.handleJobSuccess(
-            ctx,
-            result,
-            url,
-            platform,
-            quality,
-            userId,
-            statusMsg,
-          );
-        } else {
+      this.logger.log(`Job ${job.id} added to queue for user ${userId}`);
+
+      // Enhanced job completion handling with error catching
+      job.finished().then(async (result: DownloadJobResult) => {
+        try {
+          if (result.success) {
+            await this.handleJobSuccess(
+              ctx,
+              result,
+              url,
+              platform,
+              quality,
+              userId,
+              statusMsg,
+            );
+          } else {
+            this.logger.error(`Job ${job.id} failed: ${result.error}`);
+            await ctx.api.editMessageText(
+              ctx.chat!.id,
+              statusMsg.message_id,
+              `❌ Download failed: ${result.error}`,
+            );
+          }
+        } catch (error) {
+          this.logger.error(`Error handling job completion for ${job.id}:`, error);
           await ctx.api.editMessageText(
             ctx.chat!.id,
             statusMsg.message_id,
-            `❌ Error: ${result.error}`,
+            `❌ Error processing download result: ${error.message}`,
           );
         }
+      }).catch(async (error) => {
+        this.logger.error(`Job ${job.id} completion handler error:`, error);
+        await ctx.api.editMessageText(
+          ctx.chat!.id,
+          statusMsg.message_id,
+          `❌ Download job failed: ${error.message}`,
+        );
       });
+
     } catch (error) {
-      this.logger.error('Failed to add job:', error);
+      this.logger.error('Failed to add job to queue:', error);
       await ctx.api.editMessageText(
         ctx.chat!.id,
         statusMsg.message_id,
-        `❌ Failed to add job: ${error.message || error}`,
+        `❌ Failed to add download job: ${error.message}`,
       );
     }
   }

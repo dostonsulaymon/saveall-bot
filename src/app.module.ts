@@ -9,6 +9,7 @@ import { CacheModule } from './modules/cache/cache.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { DownloadModule } from './modules/download/download.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { QueueModule } from './modules/queue/queue.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { StorageModule } from './modules/storage/storage.module';
     PlatformModule,
     DownloadModule,
     StorageModule,
+    QueueModule
   ],
   controllers: [AppController],
   providers: [AppService],
