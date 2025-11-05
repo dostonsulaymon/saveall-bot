@@ -20,4 +20,12 @@ export class PlatformService {
   isValidUrl(text: string): boolean {
     return this.urlDetector.isValidUrl(text);
   }
+
+  normalizeYouTubeUrl(url: string): string {
+    return this.urlDetector.normalizeYouTubeUrl(url);
+  }
+
+  isYouTubeShort(url: string): boolean {
+    return this.urlDetector.isYouTubeShort(url);
+  }
 }

@@ -19,6 +19,7 @@ import { MessageHandler } from './handlers/message.handler';
 // Services
 import { MediaSender } from './services/media-sender.service';
 import { QueueModule } from '../queue/queue.module';
+import { UrlCacheService } from './services/url-cache.service';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { QueueModule } from '../queue/queue.module';
 
     // Services
     MediaSender,
+    UrlCacheService
   ],
   exports: [BotService],
 })

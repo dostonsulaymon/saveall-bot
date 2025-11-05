@@ -29,10 +29,24 @@ export class UrlDetector {
   }
 
   extractYouTubeId(url: string): string | null {
-    // Updated regex to handle all YouTube URL formats including Shorts
     const regex = /(?:youtube\.com\/(?:shorts\/|watch\?v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
     const match = url.match(regex);
     return match ? match[1] : null;
+  }
+
+  // ADD THIS METHOD - This is the key!
+  normalizeYouTubeUrl(url: string): string {
+    const videoId = this.extractYouTubeId(url);
+    if (!videoId) return url;
+
+    // Convert ALL YouTube URLs to standard watch format
+    // yt-dlp handles this format better
+    return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+
+  // ADD THIS HELPER
+  isYouTubeShort(url: string): boolean {
+    return /youtube\.com\/shorts\//i.test(url);
   }
 
   isValidUrl(text: string): boolean {

@@ -12,6 +12,7 @@ import { QueueService } from '../../queue/queue.service';
 import { InjectQueue } from '@nestjs/bull';
 import bull from 'bull';
 import { DownloadJobResult } from '../../download/dto/download-job.dto';
+import { UrlCacheService } from '../services/url-cache.service';
 
 @Injectable()
 export class MessageHandler {
@@ -26,6 +27,7 @@ export class MessageHandler {
     private storageService: StorageService,
     private mediaSender: MediaSender,
     private queueService: QueueService,
+    private urlCacheService: UrlCacheService,
     @InjectQueue('download') private downloadQueue: bull.Queue,
   ) {}
 
@@ -50,15 +52,71 @@ export class MessageHandler {
 
     // YouTube - show quality options
     if (platform === 'youtube') {
-      const keyboard = YoutubeKeyboard.createQualityKeyboard(text);
-      await ctx.reply('🎬 <b>Choose quality:</b>', {
-        reply_markup: keyboard,
-        parse_mode: 'HTML',
-      });
+      try {
+        // Cache the URL in Redis and get short ID
+        const urlId = await this.urlCacheService.set(text);
+
+        const keyboard = YoutubeKeyboard.createQualityKeyboard(urlId);
+        await ctx.reply('🎬 <b>Choose quality:</b>', {
+          reply_markup: keyboard,
+          parse_mode: 'HTML',
+        });
+      } catch (error) {
+        this.logger.error('Failed to cache YouTube URL:', error);
+        await ctx.reply('❌ Failed to process request. Please try again.');
+      }
       return;
     }
 
     await this.processDownload(ctx, text, platform);
+  }
+
+  async handleCallback(ctx: Context): Promise<void> {
+    const data = ctx.callbackQuery?.data;
+    const userId = ctx.from?.id;
+
+    if (!data || !userId || !data.startsWith('yt:')) return;
+
+    const parts = data.split(':');
+    if (parts.length !== 3) {
+      await ctx.answerCallbackQuery({
+        text: '❌ Invalid button data',
+        show_alert: true,
+      });
+      return;
+    }
+
+    const [_, quality, urlId] = parts;
+
+    try {
+      // Retrieve URL from Redis using the short ID
+      const url = await this.urlCacheService.get(urlId);
+
+      if (!url) {
+        await ctx.answerCallbackQuery({
+          text: '❌ Link expired (5 min timeout). Please send the URL again.',
+          show_alert: true,
+        });
+        // Delete the expired message
+        await ctx.deleteMessage().catch(() => {});
+        return;
+      }
+
+      await ctx.answerCallbackQuery();
+      await ctx.deleteMessage();
+
+      // Clean up Redis cache after retrieving
+      await this.urlCacheService.delete(urlId);
+
+      // Process the download with the retrieved URL
+      await this.processDownload(ctx, url, 'youtube', quality);
+    } catch (error) {
+      this.logger.error('Callback error:', error);
+      await ctx.answerCallbackQuery({
+        text: '❌ Something went wrong. Please try again.',
+        show_alert: true,
+      });
+    }
   }
 
   private async processDownload(
@@ -69,6 +127,7 @@ export class MessageHandler {
   ): Promise<void> {
     const userId = ctx.from?.id!;
 
+    // Check cache for single media
     const cached = await this.cacheService.getCachedMedia(url, quality);
     if (cached?.file_id) {
       this.logger.log(`Sending cached ${platform} media`);
@@ -123,43 +182,48 @@ export class MessageHandler {
       this.logger.log(`Job ${job.id} added to queue for user ${userId}`);
 
       // Enhanced job completion handling with error catching
-      job.finished().then(async (result: DownloadJobResult) => {
-        try {
-          if (result.success) {
-            await this.handleJobSuccess(
-              ctx,
-              result,
-              url,
-              platform,
-              quality,
-              userId,
-              statusMsg,
+      job
+        .finished()
+        .then(async (result: DownloadJobResult) => {
+          try {
+            if (result.success) {
+              await this.handleJobSuccess(
+                ctx,
+                result,
+                url,
+                platform,
+                quality,
+                userId,
+                statusMsg,
+              );
+            } else {
+              this.logger.error(`Job ${job.id} failed: ${result.error}`);
+              await ctx.api.editMessageText(
+                ctx.chat!.id,
+                statusMsg.message_id,
+                `❌ Download failed: ${result.error}`,
+              );
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error handling job completion for ${job.id}:`,
+              error,
             );
-          } else {
-            this.logger.error(`Job ${job.id} failed: ${result.error}`);
             await ctx.api.editMessageText(
               ctx.chat!.id,
               statusMsg.message_id,
-              `❌ Download failed: ${result.error}`,
+              `❌ Error processing download result: ${error.message}`,
             );
           }
-        } catch (error) {
-          this.logger.error(`Error handling job completion for ${job.id}:`, error);
+        })
+        .catch(async (error) => {
+          this.logger.error(`Job ${job.id} completion handler error:`, error);
           await ctx.api.editMessageText(
             ctx.chat!.id,
             statusMsg.message_id,
-            `❌ Error processing download result: ${error.message}`,
+            `❌ Download job failed: ${error.message}`,
           );
-        }
-      }).catch(async (error) => {
-        this.logger.error(`Job ${job.id} completion handler error:`, error);
-        await ctx.api.editMessageText(
-          ctx.chat!.id,
-          statusMsg.message_id,
-          `❌ Download job failed: ${error.message}`,
-        );
-      });
-
+        });
     } catch (error) {
       this.logger.error('Failed to add job to queue:', error);
       await ctx.api.editMessageText(
@@ -168,21 +232,6 @@ export class MessageHandler {
         `❌ Failed to add download job: ${error.message}`,
       );
     }
-  }
-
-  async handleCallback(ctx: Context): Promise<void> {
-    const data = ctx.callbackQuery?.data;
-    const userId = ctx.from?.id;
-
-    if (!data || !userId || !data.startsWith('yt:')) return;
-
-    const [_, quality, ...urlParts] = data.split(':');
-    const url = urlParts.join(':');
-
-    await ctx.answerCallbackQuery();
-    await ctx.deleteMessage();
-
-    await this.processDownload(ctx, url, 'youtube', quality);
   }
 
   private async handleJobSuccess(

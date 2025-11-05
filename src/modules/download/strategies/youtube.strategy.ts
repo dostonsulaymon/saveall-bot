@@ -1,21 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { GenericDownloadStrategy } from './generic.strategy';
 import { DownloadResult } from '../dto/download-job.dto';
+import { PlatformService } from '../../platform/platform.service';
 
 @Injectable()
 export class YoutubeDownloadStrategy {
-  constructor(private genericStrategy: GenericDownloadStrategy) {}
+  constructor(
+    private genericStrategy: GenericDownloadStrategy,
+    private platformService: PlatformService,
+  ) {}
 
   async download(url: string, quality: string): Promise<DownloadResult[]> {
+    const normalizedUrl = this.platformService.normalizeYouTubeUrl(url);
+
     const formatString = this.getFormatString(quality);
     const options = [
       '--format', formatString,
       '--merge-output-format', 'mp4',
     ];
-
-    if (url.includes('/shorts/')) {
-      this.ensureShortsCompatibility(options);
-    }
 
     if (quality === 'audio') {
       options.push(
@@ -25,7 +27,7 @@ export class YoutubeDownloadStrategy {
       );
     }
 
-    return this.genericStrategy.download(url, options);
+    return this.genericStrategy.download(normalizedUrl, options);
   }
 
   private getFormatString(quality: string): string {
@@ -38,11 +40,5 @@ export class YoutubeDownloadStrategy {
       'audio': 'bestaudio[ext=m4a]/bestaudio',
     };
     return formats[quality] || formats['best'];
-  }
-
-  private ensureShortsCompatibility(options: string[]): void {
-    if (!options.includes('--extract-audio')) {
-      options.push('--format', 'best[ext=mp4]');
-    }
   }
 }
