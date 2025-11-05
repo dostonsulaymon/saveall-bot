@@ -10,6 +10,7 @@ export class StartCommand {
       '<b>Supported Platforms:</b>\n' +
       '• YouTube (all qualities + audio)\n' +
       '• Instagram (posts, reels, stories, photos)\n' +
+      '• Pinterest (pins, boards, images)\n' +
       '• Facebook (videos, photos)\n' +
       '• TikTok (videos)\n' +
       '• Twitter/X (videos, photos)\n' +

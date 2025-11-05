@@ -4,6 +4,7 @@ import { YoutubeDownloadStrategy } from './strategies/youtube.strategy';
 import { InstagramDownloadStrategy } from './strategies/instagram.strategy';
 import { PlatformService } from '../platform/platform.service';
 import { DownloadResult } from './dto/download-job.dto';
+import { PinterestDownloadStrategy } from './strategies/pinterest.strategy';
 
 @Injectable()
 export class DownloadService {
@@ -13,11 +14,18 @@ export class DownloadService {
     private genericStrategy: GenericDownloadStrategy,
     private youtubeStrategy: YoutubeDownloadStrategy,
     private instagramStrategy: InstagramDownloadStrategy,
+    private pinterestStrategy: PinterestDownloadStrategy,
     private platformService: PlatformService,
   ) {}
 
-  async downloadMedia(url: string, platform: string | undefined, quality?: string): Promise<DownloadResult[]> {
-    this.logger.log(`Starting download for ${platform || 'generic'} media: ${url}`);
+  async downloadMedia(
+    url: string,
+    platform: string | undefined,
+    quality?: string,
+  ): Promise<DownloadResult[]> {
+    this.logger.log(
+      `Starting download for ${platform || 'generic'} media: ${url}`,
+    );
 
     try {
       let results: DownloadResult[];
@@ -31,12 +39,16 @@ export class DownloadService {
       } else if (platform === 'telegram') {
         this.logger.log('Using Telegram strategy');
         results = await this.downloadTelegram(url);
+      } else if (platform === 'pinterest') {
+        return await this.pinterestStrategy.download(url);
       } else {
         this.logger.log('Using generic download strategy');
         results = await this.genericStrategy.download(url);
       }
 
-      this.logger.log(`Download completed successfully. Files downloaded: ${results.length}`);
+      this.logger.log(
+        `Download completed successfully. Files downloaded: ${results.length}`,
+      );
       return results;
     } catch (error) {
       this.logger.error(`Download failed for ${url}:`, error);

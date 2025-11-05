@@ -14,7 +14,7 @@ export class UrlDetector {
     vimeo: /vimeo\.com/i,
     dailymotion: /dailymotion\.com/i,
     twitch: /twitch\.tv/i,
-    pinterest: /pinterest\.com/i,
+    pinterest: /(pinterest\.com|pin\.it)/i,
   };
 
   detectPlatform(url: string): string | null {

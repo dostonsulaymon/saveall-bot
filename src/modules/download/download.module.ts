@@ -7,6 +7,7 @@ import { InstagramDownloadStrategy } from './strategies/instagram.strategy';
 import { StorageModule } from '../storage/storage.module';
 import { PlatformModule } from '../platform/platform.module';
 import { DownloadProcessor } from './strategies/download.processor';
+import { PinterestDownloadStrategy } from './strategies/pinterest.strategy';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { DownloadProcessor } from './strategies/download.processor';
     GenericDownloadStrategy,
     YoutubeDownloadStrategy,
     InstagramDownloadStrategy,
+    PinterestDownloadStrategy
   ],
   exports: [DownloadService, BullModule],
 })
