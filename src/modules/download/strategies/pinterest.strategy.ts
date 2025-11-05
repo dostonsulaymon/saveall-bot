@@ -12,7 +12,6 @@ export class PinterestDownloadStrategy {
   private galleryDlPath: string;
 
   constructor(private storageService: StorageService) {
-    // Find gallery-dl path on initialization
     this.galleryDlPath = this.findGalleryDl();
   }
 
@@ -53,7 +52,6 @@ export class PinterestDownloadStrategy {
 
       this.logger.log(`Executing: ${this.galleryDlPath} ${args.join(' ')}`);
 
-      // Use the full path instead of just 'gallery-dl'
       const proc = spawn(this.galleryDlPath, args);
       let stdout = '';
       let stderr = '';
@@ -63,16 +61,6 @@ export class PinterestDownloadStrategy {
         const output = data.toString();
         stdout += output;
         this.logger.debug(output);
-
-        const fileMatch = output.match(/\.\/gallery-dl\/[^\s]+/g);
-        if (fileMatch) {
-          fileMatch.forEach(file => {
-            const fullPath = path.resolve(file);
-            if (fs.existsSync(fullPath)) {
-              downloadedFiles.push(fullPath);
-            }
-          });
-        }
       });
 
       proc.stderr.on('data', (data) => {
@@ -92,26 +80,46 @@ export class PinterestDownloadStrategy {
           return;
         }
 
-        // Use recursive scan if no files detected from stdout
-        if (downloadedFiles.length === 0) {
-          downloadedFiles.push(...this.getAllFilesRecursively(downloadDir));
-        }
+        // ALWAYS use recursive scan and filter only media files
+        const allFiles = this.getAllFilesRecursively(downloadDir);
+        const mediaFiles = this.filterMediaFiles(allFiles);
 
-        if (downloadedFiles.length === 0) {
-          reject(new Error('❌ No images found to download.'));
+        if (mediaFiles.length === 0) {
+          reject(new Error('❌ No images or videos found to download.'));
           return;
         }
 
-        const results: DownloadResult[] = downloadedFiles.map(filePath => ({
+        const results: DownloadResult[] = mediaFiles.map(filePath => ({
           filePath,
           title: path.basename(filePath, path.extname(filePath)),
           isImage: this.storageService.isImageFile(filePath),
         }));
 
+        // Clean up non-media files (JSON, etc.)
+        this.cleanupNonMediaFiles(allFiles, mediaFiles);
+
         resolve(results);
       });
+    });
+  }
 
+  private filterMediaFiles(files: string[]): string[] {
+    const mediaExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi', '.webm'];
+    return files.filter(file => {
+      const ext = path.extname(file).toLowerCase();
+      return mediaExtensions.includes(ext);
+    });
+  }
 
+  private cleanupNonMediaFiles(allFiles: string[], mediaFiles: string[]): void {
+    const nonMediaFiles = allFiles.filter(file => !mediaFiles.includes(file));
+    nonMediaFiles.forEach(file => {
+      try {
+        fs.unlinkSync(file);
+        this.logger.debug(`Cleaned up non-media file: ${file}`);
+      } catch (error) {
+        this.logger.warn(`Failed to clean up file: ${file}`, error);
+      }
     });
   }
 
@@ -128,37 +136,27 @@ export class PinterestDownloadStrategy {
     return '❌ Failed to download from Pinterest. Please try again.';
   }
 
-  private getLatestFiles(downloadDir: string): string[] {
-    try {
-      const galleryDlDir = path.join(downloadDir, 'gallery-dl', 'pinterest');
-
-      if (!fs.existsSync(galleryDlDir)) {
-        return [];
-      }
-
-      return fs.readdirSync(galleryDlDir)
-        .filter(f => !f.startsWith('.'))
-        .map(f => path.join(galleryDlDir, f))
-        .filter(f => fs.statSync(f).isFile())
-        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-    } catch (error) {
-      this.logger.error('Error scanning gallery-dl directory:', error);
-      return [];
-    }
-  }
-
   private getAllFilesRecursively(dir: string): string[] {
     const results: string[] = [];
     if (!fs.existsSync(dir)) return results;
 
-    fs.readdirSync(dir).forEach(file => {
-      const fullPath = path.join(dir, file);
-      if (fs.statSync(fullPath).isDirectory()) {
-        results.push(...this.getAllFilesRecursively(fullPath));
-      } else {
-        results.push(fullPath);
+    const items = fs.readdirSync(dir);
+
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+
+      try {
+        const stat = fs.statSync(fullPath);
+
+        if (stat.isDirectory()) {
+          results.push(...this.getAllFilesRecursively(fullPath));
+        } else {
+          results.push(fullPath);
+        }
+      } catch (error) {
+        this.logger.warn(`Could not access ${fullPath}:`, error);
       }
-    });
+    }
 
     return results;
   }
