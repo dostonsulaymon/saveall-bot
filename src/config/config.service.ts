@@ -13,6 +13,20 @@ export class ConfigService {
     return this.configService.get<number>(key) || defaultValue || 0;
   }
 
+  getBoolean(key: string, defaultValue: boolean = false): boolean {
+    const value = this.configService.get<unknown>(key);
+
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+      if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+
+    return defaultValue;
+  }
+
   isProduction(): boolean {
     return this.get('NODE_ENV') === 'production';
   }

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ollama Chat + File Upload</title>
+  <style>
+      body {
+          font-family: Arial, sans-serif;
+          margin: 20px;
+          background-color: #f4f4f9;
+      }
+      h1 {
+          text-align: center;
+          color: #333;
+      }
+      #chat-container {
+          border: 1px solid #ddd;
+          padding: 15px;
+          height: 400px;
+          overflow-y: auto;
+          margin-bottom: 20px;
+          background-color: white;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .chat-message {
+          display: flex;
+          align-items: center;
+          margin-bottom: 10px;
+      }
+      .message-sender {
+          font-weight: bold;
+          color: #555;
+          margin-right: 8px;
+      }
+      .message-text {
+          flex-grow: 1;
+          color: #333;
+          word-wrap: break-word;
+      }
+      #userInput {
+          width: calc(100% - 240px);
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 5px;
+          margin-right: 8px;
+          outline: none;
+      }
+      .send-button, .upload-button {
+          padding: 10px 16px;
+          background-color: #007bff;
+          color: white;
+          border: none;
+          border-radius: 5px;
+          cursor: pointer;
+          font-size: 14px;
+      }
+      .send-button:hover, .upload-button:hover {
+          background-color: #0056b3;
+      }
+      #fileInput { display: none; }
+      .file-upload-label {
+          padding: 10px 16px;
+          background-color: #28a745;
+          color: white;
+          border: none;
+          border-radius: 5px;
+          cursor: pointer;
+          font-size: 14px;
+      }
+      .file-upload-label:hover {
+          background-color: #218838;
+      }
+  </style>
+</head>
+<body>
+
+<h1>Ollama Chat + File Upload</h1>
+
+<div id="chat-container">
+  <div id="chat"></div>
+</div>
+
+<input type="text" id="userInput" placeholder="Type a message..." />
+<button class="send-button" onclick="sendMessage()">Send</button>
+<br><br>
+
+<label for="fileInput" class="file-upload-label">Upload Files</label>
+<input type="file" id="fileInput" multiple style="display: none;" onchange="uploadFiles()" />
+
+<script>
+  const chatDiv = document.getElementById('chat');
+  const userInput = document.getElementById('userInput');
+  let fileContents = "";
+
+  async function sendMessage() {
+    const message = userInput.value.trim();
+    if (!message && !fileContents) return;
+
+    addChatMessage("You", message || "[Uploaded files/images]");
+    userInput.value = "";
+
+    // Build request payload
+    let prompt = message;
+    if (fileContents) {
+      prompt += "\n\nUploaded files/images:\n" + fileContents;
+      fileContents = ""; // clear after sending
+    }
+
+    try {
+      const response = await fetch('http://localhost:11434/v1/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: "yi-coder:9b",
+          prompt: prompt,
+          max_tokens: 500
+        })
+      });
+      const data = await response.json();
+      addChatMessage("Ollama", data.choices[0].text || "[No response]");
+    } catch (err) {
+      addChatMessage("Error", err.message);
+    }
+  }
+
+  function addChatMessage(sender, text) {
+    const div = document.createElement('div');
+    div.className = 'chat-message';
+    div.innerHTML = `<span class="message-sender">${sender}:</span> <span class="message-text">${text.replace(/\n/g, "<br>")}</span>`;
+    chatDiv.appendChild(div);
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  }
+
+  function uploadFiles() {
+    const files = fileInput.files;
+    if (!files.length) return alert("Please select at least one file to upload.");
+
+    let readerPromises = Array.from(files).map(file => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        if (file.type.startsWith("text/") || file.name.endsWith(".ts")) {
+          reader.onload = e => resolve(`==== ${file.name} ====\n${e.target.result}`);
+          reader.readAsText(file);
+        } else if (file.type.startsWith("image/")) {
+          reader.onload = e => resolve(`==== ${file.name} (image, Base64) ====\n${e.target.result}`);
+          reader.readAsDataURL(file);
+        } else {
+          resolve(`==== ${file.name} (unsupported type) ====\n[Skipped]`);
+        }
+      });
+    });
+
+    Promise.all(readerPromises).then(contents => {
+      fileContents = contents.join("\n\n");
+      addChatMessage("System", `Loaded ${files.length} files/images. They will be sent with your next message.`);
+    });
+  }
+</script>
+
+</body>
+</html>

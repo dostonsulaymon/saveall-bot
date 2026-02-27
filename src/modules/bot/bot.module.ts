@@ -12,6 +12,7 @@ import { StorageModule } from '../storage/storage.module';
 import { StartCommand } from './commands/start.command';
 import { StatsCommand } from './commands/stats.command';
 import { BroadcastCommand } from './commands/broadcast.command';
+import { BroadcastProcessor } from './processors/broadcast.processor';
 
 // Handlers
 import { MessageHandler } from './handlers/message.handler';
@@ -43,6 +44,7 @@ import { UrlCacheService } from './services/url-cache.service';
 
     // Handlers
     MessageHandler,
+    BroadcastProcessor,
 
     // Services
     MediaSender,

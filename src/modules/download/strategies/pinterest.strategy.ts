@@ -9,13 +9,13 @@ import { StorageService } from '../../storage/storage.service';
 @Injectable()
 export class PinterestDownloadStrategy {
   private readonly logger = new Logger(PinterestDownloadStrategy.name);
-  private galleryDlPath: string;
+  private galleryDlPath: string | null;
 
   constructor(private storageService: StorageService) {
     this.galleryDlPath = this.findGalleryDl();
   }
 
-  private findGalleryDl(): string {
+  private findGalleryDl(): string | null {
     try {
       const result = execSync('which gallery-dl', { encoding: 'utf-8' }).trim();
       this.logger.log(`Found gallery-dl at: ${result}`);
@@ -34,29 +34,31 @@ export class PinterestDownloadStrategy {
         }
       }
 
-      this.logger.error(
-        'gallery-dl not found! Please install: pip3 install gallery-dl',
+      this.logger.warn(
+        'gallery-dl not found; Pinterest downloads will fall back to yt-dlp',
       );
-      throw new Error('gallery-dl is not installed');
+      return null;
     }
   }
 
   async download(url: string): Promise<DownloadResult[]> {
     try {
-      // FIRST: Try gallery-dl for images (primary content)
-      try {
-        const galleryResults = await this.downloadWithGalleryDl(url);
-        if (galleryResults.length > 0) {
-          this.logger.log(
-            `Found ${galleryResults.length} images via gallery-dl`,
+      // FIRST: Try gallery-dl for images (primary content), if available
+      if (this.galleryDlPath) {
+        try {
+          const galleryResults = await this.downloadWithGalleryDl(url);
+          if (galleryResults.length > 0) {
+            this.logger.log(
+              `Found ${galleryResults.length} images via gallery-dl`,
+            );
+            return galleryResults;
+          }
+        } catch (galleryError) {
+          this.logger.warn(
+            `Gallery-dl failed, trying yt-dlp: ${galleryError.message}`,
           );
-          return galleryResults;
+          // Continue to yt-dlp fallback
         }
-      } catch (galleryError) {
-        this.logger.warn(
-          `Gallery-dl failed, trying yt-dlp: ${galleryError.message}`,
-        );
-        // Continue to yt-dlp fallback
       }
 
       // SECOND: Try yt-dlp for video (or as fallback)
@@ -72,6 +74,10 @@ export class PinterestDownloadStrategy {
   }
 
   private async downloadWithGalleryDl(url: string): Promise<DownloadResult[]> {
+    if (!this.galleryDlPath) {
+      return [];
+    }
+
     const downloadDir = this.storageService.getDownloadDir();
 
     return new Promise((resolve, reject) => {
@@ -99,7 +105,11 @@ export class PinterestDownloadStrategy {
         this.logger.debug(output);
 
         // Look for downloaded files in output
-        const fileMatch = output.match(/downloads\/[^\s]+/);
+        const escapedDownloadDir = downloadDir.replace(
+          /[-/\\^$*+?.()|[\]{}]/g,
+          '\\$&',
+        );
+        const fileMatch = output.match(new RegExp(`${escapedDownloadDir}[\\/][^\\s]+`));
         if (fileMatch) {
           const fullPath = path.resolve(fileMatch[0]);
           if (fs.existsSync(fullPath)) {

@@ -10,13 +10,33 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private config: ConfigService) {
     const token = this.config.get('BOT_TOKEN');
+    const useLocalBotApi = this.config.getBoolean('USE_LOCAL_BOT_API', false);
+    const configuredApiRoot = this.config.get('TELEGRAM_API_ROOT').trim();
 
     if (!token) {
       this.logger.error('BOT_TOKEN is not defined in environment variables!');
       throw new Error('BOT_TOKEN is required');
     }
 
-    this.bot = new Bot(token);
+    if (useLocalBotApi) {
+      if (!configuredApiRoot) {
+        this.logger.error(
+          'USE_LOCAL_BOT_API=true but TELEGRAM_API_ROOT is empty',
+        );
+        throw new Error('TELEGRAM_API_ROOT is required when USE_LOCAL_BOT_API=true');
+      }
+
+      const apiRoot = configuredApiRoot.replace(/\/+$/, '');
+      this.logger.log(`Using local Telegram Bot API root: ${apiRoot}`);
+      this.bot = new Bot(token, {
+        client: {
+          apiRoot,
+        },
+      });
+    } else {
+      this.bot = new Bot(token);
+      this.logger.log('Using default Telegram Bot API: https://api.telegram.org');
+    }
 
     this.bot.catch((err) => {
       this.logger.error('Bot error:', err);

@@ -33,7 +33,22 @@ import { QueueService } from './queue.service';
 
     BullModule.registerQueue({
       name: 'download',
-
+    }),
+    BullModule.registerQueue({
+      name: 'broadcast',
+      limiter: {
+        max: 20,
+        duration: 1000,
+      },
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 50,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 3000,
+        },
+      },
     }),
   ],
   providers: [QueueService],

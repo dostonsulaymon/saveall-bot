@@ -13,13 +13,15 @@ import { InjectQueue } from '@nestjs/bull';
 import bull from 'bull';
 import { DownloadJobResult } from '../../download/dto/download-job.dto';
 import { UrlCacheService } from '../services/url-cache.service';
+import { ConfigService } from '../../../config/config.service';
 
 @Injectable()
 export class MessageHandler {
   private readonly logger = new Logger(MessageHandler.name);
-  private readonly MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+  private readonly maxFileSizeBytes: number;
 
   constructor(
+    private configService: ConfigService,
     private platformService: PlatformService,
     private cacheService: CacheService,
     private downloadService: DownloadService,
@@ -29,7 +31,12 @@ export class MessageHandler {
     private queueService: QueueService,
     private urlCacheService: UrlCacheService,
     @InjectQueue('download') private downloadQueue: bull.Queue,
-  ) {}
+  ) {
+    this.maxFileSizeBytes = this.configService.getNumber(
+      'MAX_FILE_SIZE',
+      50 * 1024 * 1024,
+    );
+  }
 
   async handleText(ctx: Context): Promise<void> {
     const text = ctx.message?.text?.trim();
@@ -126,32 +133,21 @@ export class MessageHandler {
     quality?: string,
   ): Promise<void> {
     const userId = ctx.from?.id!;
-
-    // Check cache for single media
-    const cached = await this.cacheService.getCachedMedia(url, quality);
-    if (cached?.file_id) {
-      this.logger.log(`Sending cached ${platform} media`);
-
+    const cachedItems = await this.cacheService.getCachedItems(url, quality);
+    if (cachedItems.length > 0) {
       try {
-        await this.mediaSender.sendCachedMedia(ctx, cached);
+        if (cachedItems.length === 1) {
+          this.logger.log(`Sending cached ${platform} media`);
+          await this.mediaSender.sendCachedMedia(ctx, cachedItems[0]);
+        } else {
+          this.logger.log(`Sending cached album with ${cachedItems.length} items`);
+          await this.mediaSender.sendCachedAlbum(ctx, cachedItems);
+        }
+
         await this.userService.incrementDownloads(userId);
         return;
       } catch (error) {
         this.logger.log('Cache invalid, downloading fresh...');
-      }
-    }
-
-    // Check for cached album
-    const cachedAlbum = await this.cacheService.getCachedAlbum(url);
-    if (cachedAlbum.length > 0) {
-      this.logger.log(`Sending cached album with ${cachedAlbum.length} items`);
-
-      try {
-        await this.mediaSender.sendCachedAlbum(ctx, cachedAlbum);
-        await this.userService.incrementDownloads(userId);
-        return;
-      } catch (error) {
-        this.logger.log('Album cache invalid, downloading fresh...');
       }
     }
 
@@ -253,10 +249,12 @@ export class MessageHandler {
 
     const mediaGroupId = results.length > 1 ? crypto.randomUUID() : undefined;
 
-    for (const item of results) {
+    for (const [mediaIndex, item] of results.entries()) {
       const fileSize = this.storageService.getFileSize(item.filePath);
-      if (fileSize > this.MAX_FILE_SIZE) {
-        await ctx.reply('❌ File too large (>50MB). Skipping...');
+      if (fileSize > this.maxFileSizeBytes) {
+        await ctx.reply(
+          `❌ File too large (>${this.formatBytes(this.maxFileSizeBytes)}). Skipping...`,
+        );
         this.storageService.deleteFile(item.filePath);
         continue;
       }
@@ -272,6 +270,7 @@ export class MessageHandler {
             url,
             platform,
             quality,
+            media_index: mediaIndex,
             file_id: fileId,
             file_type: fileType,
             media_group_id: mediaGroupId,
@@ -285,5 +284,17 @@ export class MessageHandler {
 
     await this.userService.incrementDownloads(userId);
     await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id);
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const exponent = Math.min(
+      Math.floor(Math.log(bytes) / Math.log(1024)),
+      units.length - 1,
+    );
+    const value = bytes / Math.pow(1024, exponent);
+    const precision = exponent === 0 ? 0 : 2;
+    return `${value.toFixed(precision)} ${units[exponent]}`;
   }
 }

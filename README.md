@@ -83,15 +83,49 @@ PORT=3000
 
 BOT_TOKEN=your_bot_token_here
 ADMIN_ID=your_telegram_user_id
+USE_LOCAL_BOT_API=false
+TELEGRAM_API_ROOT=
 
 MONGODB_URI=mongodb://localhost:27017/downloader_bot
 
 CACHE_DAYS=30
+# bytes (50MB default for public Bot API)
 MAX_FILE_SIZE=52428800
 DOWNLOAD_DIR=downloads
+
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Only needed if running local telegram-bot-api server
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
 ```
 
-### 3. Update tsconfig.json
+### 3. Local Telegram Bot API (optional, for large uploads)
+
+Public `api.telegram.org` uploads are typically limited around 50MB for bots.  
+To upload larger files, run a local Telegram Bot API server.
+
+1. Get `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from `https://my.telegram.org` (API Development Tools).
+2. Start local server:
+
+```bash
+cd docker/telegram-bot-api
+docker compose up -d
+```
+
+3. Point the bot to local API in `.env`:
+
+```env
+USE_LOCAL_BOT_API=true
+TELEGRAM_API_ROOT=http://127.0.0.1:8081
+```
+
+Recommended `MAX_FILE_SIZE` values (bytes):
+- Public Bot API: `52428800` (50MB)
+- Local Bot API: increase as needed (for example `125829120` for 120MB, up to around 2000MB if your infra supports it)
+
+### 4. Update tsconfig.json
 
 ```json
 {

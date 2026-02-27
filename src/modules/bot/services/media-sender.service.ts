@@ -64,27 +64,54 @@ export class MediaSender {
     const caption = '⚡ <i>Sent from cache (instant delivery!)</i>';
 
     if (cached.file_type === 'video') {
-      await ctx.replyWithVideo(cached.file_id, { caption });
+      await ctx.replyWithVideo(cached.file_id, { caption, parse_mode: 'HTML' });
     } else if (cached.file_type === 'audio') {
-      await ctx.replyWithAudio(cached.file_id, { caption });
+      await ctx.replyWithAudio(cached.file_id, { caption, parse_mode: 'HTML' });
     } else if (cached.file_type === 'photo') {
-      await ctx.replyWithPhoto(cached.file_id, { caption });
+      await ctx.replyWithPhoto(cached.file_id, { caption, parse_mode: 'HTML' });
     } else {
-      await ctx.replyWithDocument(cached.file_id, { caption });
+      await ctx.replyWithDocument(cached.file_id, { caption, parse_mode: 'HTML' });
     }
   }
 
   async sendCachedAlbum(ctx: Context, cachedAlbum: MediaDocument[]): Promise<void> {
     const caption = '⚡ <i>Sent from cache (instant delivery!)</i>';
+    const mediaGroup: any[] = [];
+    let hasUnsupportedType = false;
+
+    for (const item of cachedAlbum) {
+      if (!item.file_id) {
+        continue;
+      }
+
+      const baseOptions =
+        mediaGroup.length === 0
+          ? { caption, parse_mode: 'HTML' as const }
+          : {};
+
+      if (item.file_type === 'photo') {
+        mediaGroup.push({ type: 'photo', media: item.file_id, ...baseOptions });
+      } else if (item.file_type === 'video') {
+        mediaGroup.push({
+          type: 'video',
+          media: item.file_id,
+          supports_streaming: true,
+          ...baseOptions,
+        });
+      } else {
+        hasUnsupportedType = true;
+        break;
+      }
+    }
+
+    if (!hasUnsupportedType && mediaGroup.length > 1) {
+      await ctx.replyWithMediaGroup(mediaGroup);
+      return;
+    }
 
     for (const item of cachedAlbum) {
       if (!item.file_id) continue;
-
-      if (item.file_type === 'photo') {
-        await ctx.replyWithPhoto(item.file_id, { caption });
-      } else if (item.file_type === 'video') {
-        await ctx.replyWithVideo(item.file_id, { caption });
-      }
+      await this.sendCachedMedia(ctx, item);
     }
   }
 

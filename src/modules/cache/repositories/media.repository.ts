@@ -8,6 +8,7 @@ export interface SaveMediaDto {
   url: string;
   platform: string;
   quality?: string;
+  media_index?: number;
   file_id?: string;
   file_type?: 'video' | 'audio' | 'document' | 'photo';
   media_group_id?: string;
@@ -26,37 +27,46 @@ export class MediaRepository {
   }
 
   async findCached(url: string, quality?: string): Promise<MediaDocument | null> {
+    const items = await this.findCachedItems(url, quality);
+    return items.length > 0 ? items[0] : null;
+  }
+
+  async findCachedItems(url: string, quality?: string): Promise<MediaDocument[]> {
     const hash = this.hashUrl(url, quality);
-    return this.mediaModel.findOne({
+    const items = await this.mediaModel.find({
       url_hash: hash,
       file_id: { $exists: true },
+    });
+
+    return items.sort((a, b) => {
+      const left = a.media_index ?? 0;
+      const right = b.media_index ?? 0;
+      if (left !== right) return left - right;
+      return a.created_at.getTime() - b.created_at.getTime();
     });
   }
 
   async findCachedAlbum(url: string): Promise<MediaDocument[]> {
-    const hash = this.hashUrl(url);
-    const baseMedia = await this.mediaModel.findOne({ url_hash: hash });
-
-    if (!baseMedia?.media_group_id) return [];
-
-    return this.mediaModel
-      .find({
-        media_group_id: baseMedia.media_group_id,
-        file_id: { $exists: true },
-      })
-      .sort({ created_at: 1 });
+    const items = await this.findCachedItems(url);
+    return items.length > 1 ? items : [];
   }
 
   async save(data: SaveMediaDto): Promise<MediaDocument> {
     const hash = this.hashUrl(data.url, data.quality);
+    const mediaIndex = data.media_index ?? 0;
+    const filter =
+      mediaIndex === 0
+        ? { url_hash: hash, $or: [{ media_index: 0 }, { media_index: { $exists: false } }] }
+        : { url_hash: hash, media_index: mediaIndex };
 
     return this.mediaModel.findOneAndUpdate(
-      { url_hash: hash },
+      filter,
       {
         url_hash: hash,
         original_url: data.url,
         platform: data.platform,
         quality: data.quality,
+        media_index: mediaIndex,
         file_id: data.file_id,
         file_type: data.file_type,
         media_group_id: data.media_group_id,
@@ -64,7 +74,7 @@ export class MediaRepository {
         duration: data.duration,
         file_size: data.file_size,
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   }
 }

@@ -4,13 +4,16 @@ import * as path from 'path';
 import axios from 'axios';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
+import { ConfigService } from '../../../config/config.service';
 
 @Injectable()
 export class LocalStorageProvider {
   private readonly logger = new Logger(LocalStorageProvider.name);
-  private readonly downloadDir = 'downloads';
+  private readonly downloadDir: string;
 
-  constructor() {
+  constructor(private configService: ConfigService) {
+    this.downloadDir =
+      this.configService.get('DOWNLOAD_DIR')?.trim() || 'downloads';
     this.ensureDownloadDir();
   }
 

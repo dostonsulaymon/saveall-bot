@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
@@ -7,36 +8,45 @@ import { Queue } from 'bull';
 import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
+import { StartupChecksService } from './startup/startup-checks.service';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  try {
+    await StartupChecksService.run(logger);
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
+    const app = await NestFactory.create(AppModule);
 
-  const downloadQueue = app.get<Queue>(getQueueToken('download'));
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
 
-  const serverAdapter = new ExpressAdapter();
-  serverAdapter.setBasePath('/admin/queues');
+    const downloadQueue = app.get<Queue>(getQueueToken('download'));
 
-  createBullBoard({
-    queues: [new BullAdapter(downloadQueue)],
-    serverAdapter,
-  });
+    const serverAdapter = new ExpressAdapter();
+    serverAdapter.setBasePath('/admin/queues');
 
-  app.use('/admin/queues', serverAdapter.getRouter());
+    createBullBoard({
+      queues: [new BullAdapter(downloadQueue)],
+      serverAdapter,
+    });
 
-  const port = process.env.PORT || 3000;
-  await app.listen(port);
+    app.use('/admin/queues', serverAdapter.getRouter());
 
-  logger.log(`🚀 Application is running on: http://localhost:${port}`);
-  logger.log(`📊 Bull Board: http://localhost:${port}/admin/queues`);
+    const port = process.env.PORT || 3000;
+    await app.listen(port);
+
+    logger.log(`🚀 Application is running on: http://localhost:${port}`);
+    logger.log(`📊 Bull Board: http://localhost:${port}/admin/queues`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`Startup failed: ${message}`);
+    process.exit(1);
+  }
 }
 
 bootstrap();
