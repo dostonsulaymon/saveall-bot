@@ -4,12 +4,22 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DownloadResult } from '../dto/download-job.dto';
 import { StorageService } from '../../storage/storage.service';
+import { ConfigService } from '../../../config/config.service';
 
 @Injectable()
 export class GenericDownloadStrategy {
   private readonly logger = new Logger(GenericDownloadStrategy.name);
+  private readonly maxFileSizeBytes: number;
 
-  constructor(private storageService: StorageService) {}
+  constructor(
+    private storageService: StorageService,
+    private configService: ConfigService,
+  ) {
+    this.maxFileSizeBytes = this.configService.getNumber(
+      'MAX_FILE_SIZE',
+      50 * 1024 * 1024,
+    );
+  }
 
   async download(url: string, options: string[] = []): Promise<DownloadResult[]> {
     const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
@@ -25,6 +35,8 @@ export class GenericDownloadStrategy {
         '--no-playlist',
         '--retries', '3',
         '--fragment-retries', '3',
+        '--abort-on-unavailable-fragments',
+        '--max-filesize', `${this.maxFileSizeBytes}`,
         '--write-info-json',
         url,
       ];
@@ -37,7 +49,12 @@ export class GenericDownloadStrategy {
 
       proc.stdout.on('data', (data) => {
         const output = data.toString();
-        this.logger.debug(`[${uniqueId}] ${output}`);
+
+        // Ignore frequent progress updates to prevent log spam.
+        // Keep only informative events (destination/merge/errors).
+        if (!/\[download\]\s+\d+(\.\d+)?%/.test(output)) {
+          this.logger.debug(`[${uniqueId}] ${output}`);
+        }
 
         const destMatch = output.match(/\[download\] Destination: (.+)/);
         if (destMatch) {
@@ -89,6 +106,9 @@ export class GenericDownloadStrategy {
   }
 
   private parseError(stderr: string): string {
+    if (/File is larger than max-filesize/i.test(stderr)) {
+      return `❌ File is larger than the configured limit (${this.formatBytes(this.maxFileSizeBytes)}).`;
+    }
     if (/Cannot parse data/.test(stderr)) {
       return '❌ Unable to download this video. The platform may have changed, please try later.';
     }
@@ -99,6 +119,18 @@ export class GenericDownloadStrategy {
       return '❌ Could not find media to download.';
     }
     return '❌ Something went wrong while downloading. Please try again later.';
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const exponent = Math.min(
+      Math.floor(Math.log(bytes) / Math.log(1024)),
+      units.length - 1,
+    );
+    const value = bytes / Math.pow(1024, exponent);
+    const precision = exponent === 0 ? 0 : 2;
+    return `${value.toFixed(precision)} ${units[exponent]}`;
   }
 
   private getLatestFiles(uniqueId: string): string[] {
