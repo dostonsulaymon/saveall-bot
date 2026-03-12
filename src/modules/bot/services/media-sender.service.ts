@@ -23,7 +23,7 @@ export class MediaSender {
     result: DownloadResult,
     platform: string,
     cached: boolean = false,
-    options?: { preferDocumentForVideo?: boolean },
+    options?: { preferDocumentForVideo?: boolean; forceAudioUpload?: boolean },
   ): Promise<MediaMessage | null> {
     const { filePath, isImage } = result;
 
@@ -39,7 +39,13 @@ export class MediaSender {
     try {
       let message: MediaMessage;
 
-      if (isImage || this.storageService.isImageFile(filePath)) {
+      if (options?.forceAudioUpload) {
+        try {
+          message = await ctx.replyWithAudio(inputFile, { caption });
+        } catch {
+          message = await ctx.replyWithDocument(inputFile, { caption });
+        }
+      } else if (isImage || this.storageService.isImageFile(filePath)) {
         message = await ctx.replyWithPhoto(inputFile, { caption });
       } else if (this.storageService.isAudioFile(filePath)) {
         message = await ctx.replyWithAudio(inputFile, { caption });
@@ -67,6 +73,15 @@ export class MediaSender {
     if (!cached.file_id) return;
 
     const caption = '⚡ <i>Sent from cache (instant delivery!)</i>';
+
+    if (cached.quality === 'audio') {
+      try {
+        await ctx.replyWithAudio(cached.file_id, { caption, parse_mode: 'HTML' });
+      } catch {
+        await ctx.replyWithDocument(cached.file_id, { caption, parse_mode: 'HTML' });
+      }
+      return;
+    }
 
     if (cached.file_type === 'video') {
       await ctx.replyWithVideo(cached.file_id, { caption, parse_mode: 'HTML' });

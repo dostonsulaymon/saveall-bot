@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DownloadResult } from '../dto/download-job.dto';
@@ -50,6 +51,7 @@ export class GenericDownloadStrategy {
       let stderr = '';
       const downloadedFiles: string[] = [];
       let selectedHeight: number | undefined;
+      let requestedQualityFromPrint: string | undefined;
 
       proc.stdout.on('data', (data) => {
         const output = data.toString();
@@ -67,6 +69,7 @@ export class GenericDownloadStrategy {
           const requestedQuality = selectionMatch[1];
           const selectedFormat = selectionMatch[2];
           const selectedHeightRaw = selectionMatch[3];
+          requestedQualityFromPrint = requestedQuality;
           const requestedHeight = Number.parseInt(requestedQuality, 10);
           const parsedSelectedHeight = Number.parseInt(selectedHeightRaw, 10);
 
@@ -129,6 +132,29 @@ export class GenericDownloadStrategy {
           return;
         }
 
+        const requestedVideoHeight = Number.parseInt(
+          requestedQualityFromPrint ?? '',
+          10,
+        );
+        const expectsVideoOutput = Number.isFinite(requestedVideoHeight);
+        if (expectsVideoOutput) {
+          const filesWithVideo = files.filter((filePath) =>
+            this.hasVideoStream(filePath),
+          );
+
+          if (filesWithVideo.length === 0) {
+            this.cleanupJobDir(jobDir);
+            reject(
+              new Error(
+                `❌ Requested ${requestedVideoHeight}p video, but only audio output was produced. Try a lower quality or another link.`,
+              ),
+            );
+            return;
+          }
+
+          files = filesWithVideo;
+        }
+
         const results: DownloadResult[] = files.map(filePath => ({
           filePath,
           jobDir,
@@ -181,5 +207,29 @@ export class GenericDownloadStrategy {
 
   private cleanupJobDir(jobDir: string): void {
     this.storageService.deleteDirectory(jobDir);
+  }
+
+  private hasVideoStream(filePath: string): boolean {
+    const probe = spawnSync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=codec_type',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        filePath,
+      ],
+      { encoding: 'utf-8' },
+    );
+
+    if (probe.status !== 0) {
+      return false;
+    }
+
+    return probe.stdout.trim().split('\n').includes('video');
   }
 }

@@ -325,6 +325,7 @@ export class MessageHandler {
         platform === 'youtube' &&
         requestedHeight !== null &&
         requestedHeight >= 1080;
+      const forceAudioUpload = platform === 'youtube' && quality === 'audio';
 
       for (const [mediaIndex, item] of results.entries()) {
         const fileSize = this.storageService.getFileSize(item.filePath);
@@ -337,6 +338,7 @@ export class MessageHandler {
 
         const message = await this.mediaSender.sendMedia(ctx, item, platform, false, {
           preferDocumentForVideo,
+          forceAudioUpload,
         });
 
         if (message) {
