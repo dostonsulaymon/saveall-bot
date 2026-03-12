@@ -321,10 +321,6 @@ export class MessageHandler {
         );
       }
 
-      const preferDocumentForVideo =
-        platform === 'youtube' &&
-        requestedHeight !== null &&
-        requestedHeight >= 1080;
       const forceAudioUpload = platform === 'youtube' && quality === 'audio';
 
       for (const [mediaIndex, item] of results.entries()) {
@@ -337,7 +333,6 @@ export class MessageHandler {
         }
 
         const message = await this.mediaSender.sendMedia(ctx, item, platform, false, {
-          preferDocumentForVideo,
           forceAudioUpload,
         });
 
