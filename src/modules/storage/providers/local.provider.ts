@@ -48,6 +48,16 @@ export class LocalStorageProvider {
     }
   }
 
+  deleteDirectory(dirPath: string): void {
+    try {
+      if (!fs.existsSync(dirPath)) return;
+      fs.rmSync(dirPath, { recursive: true, force: true });
+      this.logger.log(`Deleted directory: ${dirPath}`);
+    } catch (error) {
+      this.logger.error(`Failed to delete directory ${dirPath}:`, error);
+    }
+  }
+
   async downloadFile(url: string, filePath: string): Promise<void> {
     const response = await axios({
       method: 'GET',

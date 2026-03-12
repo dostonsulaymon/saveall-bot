@@ -22,7 +22,8 @@ export class MediaSender {
     ctx: Context,
     result: DownloadResult,
     platform: string,
-    cached: boolean = false
+    cached: boolean = false,
+    options?: { preferDocumentForVideo?: boolean },
   ): Promise<MediaMessage | null> {
     const { filePath, isImage } = result;
 
@@ -43,6 +44,10 @@ export class MediaSender {
       } else if (this.storageService.isAudioFile(filePath)) {
         message = await ctx.replyWithAudio(inputFile, { caption });
       } else if (this.storageService.isVideoFile(filePath)) {
+        if (options?.preferDocumentForVideo) {
+          message = await ctx.replyWithDocument(inputFile, { caption });
+          return message;
+        }
         message = await ctx.replyWithVideo(inputFile, {
           caption,
           supports_streaming: true,

@@ -9,6 +9,17 @@ import { Logger } from '@nestjs/common';
 import bull from 'bull';
 import { DownloadService } from '../download.service';
 import * as downloadJobDto from '../dto/download-job.dto';
+import * as fs from 'fs';
+
+const DEFAULT_DOWNLOAD_WORKER_CONCURRENCY = 10;
+const parsedDownloadWorkerConcurrency = Number(
+  process.env.DOWNLOAD_WORKER_CONCURRENCY,
+);
+const DOWNLOAD_WORKER_CONCURRENCY =
+  Number.isInteger(parsedDownloadWorkerConcurrency) &&
+  parsedDownloadWorkerConcurrency > 0
+    ? parsedDownloadWorkerConcurrency
+    : DEFAULT_DOWNLOAD_WORKER_CONCURRENCY;
 
 @Processor('download')
 export class DownloadProcessor {
@@ -18,7 +29,9 @@ export class DownloadProcessor {
 
   @OnQueueActive()
   onActive(job: bull.Job<downloadJobDto.DownloadJobData>) {
-    this.logger.log(`Processing job ${job.id} for URL: ${job.data.url}`);
+    this.logger.log(
+      `download_job_started jobId=${job.id} platform=${job.data.platform} url=${job.data.url}`,
+    );
   }
 
   @OnQueueCompleted()
@@ -26,22 +39,29 @@ export class DownloadProcessor {
     job: bull.Job<downloadJobDto.DownloadJobData>,
     result: downloadJobDto.DownloadJobResult,
   ) {
-    this.logger.log(`Job ${job.id} completed successfully`);
+    const filesCount = result?.results?.length || 0;
+    const totalBytes = this.getTotalSizeBytes(result?.results);
+    this.logger.log(
+      `download_job_completed jobId=${job.id} platform=${job.data.platform} files=${filesCount} totalBytes=${totalBytes ?? 'unknown'}`,
+    );
   }
 
   @OnQueueFailed()
   onFailed(job: bull.Job<downloadJobDto.DownloadJobData>, error: Error) {
-    this.logger.error(`Job ${job.id} failed: ${error.message}`);
+    this.logger.error(
+      `download_job_failed jobId=${job.id} platform=${job.data.platform} error=${error.message}`,
+    );
   }
 
-  // Set concurrency to 10 - this allows processing 10 jobs simultaneously
-  @Process({ concurrency: 10 })
+  @Process({ concurrency: DOWNLOAD_WORKER_CONCURRENCY })
   async handleDownload(
     job: bull.Job<downloadJobDto.DownloadJobData>,
   ): Promise<downloadJobDto.DownloadJobResult> {
     const { url, quality, userId, platform } = job.data;
 
-    this.logger.log(`Processing download job ${job.id} for user ${userId}`);
+    this.logger.log(
+      `download_job_processing jobId=${job.id} userId=${userId} platform=${platform} url=${url}`,
+    );
 
     try {
       await job.progress(10);
@@ -65,11 +85,37 @@ export class DownloadProcessor {
         // jobId: job.id.toString(),
       };
     } catch (error) {
-      this.logger.error(`Job ${job.id} failed:`, error);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `download_job_failed jobId=${job.id} platform=${platform} error=${message}`,
+      );
 
       // Re-throw the error to trigger Bull's retry mechanism
       // This will automatically retry based on your queue configuration
       throw error;
     }
+  }
+
+  private getTotalSizeBytes(
+    results?: downloadJobDto.DownloadResult[],
+  ): number | null {
+    if (!results || results.length === 0) return 0;
+
+    let total = 0;
+    let hasReadableSize = false;
+
+    for (const item of results) {
+      try {
+        const stat = fs.statSync(item.filePath);
+        if (stat.isFile()) {
+          total += stat.size;
+          hasReadableSize = true;
+        }
+      } catch {
+        // Best-effort metric only.
+      }
+    }
+
+    return hasReadableSize ? total : null;
   }
 }

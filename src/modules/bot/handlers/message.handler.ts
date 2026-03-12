@@ -14,11 +14,14 @@ import bull from 'bull';
 import { DownloadJobResult } from '../../download/dto/download-job.dto';
 import { UrlCacheService } from '../services/url-cache.service';
 import { ConfigService } from '../../../config/config.service';
+import { DownloadRateLimiterService } from '../services/download-rate-limiter.service';
 
 @Injectable()
 export class MessageHandler {
   private readonly logger = new Logger(MessageHandler.name);
   private readonly maxFileSizeBytes: number;
+  private readonly downloadFailureMessage =
+    '❌ Failed to download this media. The link may be private, unsupported, or temporarily unavailable.';
 
   constructor(
     private configService: ConfigService,
@@ -30,6 +33,7 @@ export class MessageHandler {
     private mediaSender: MediaSender,
     private queueService: QueueService,
     private urlCacheService: UrlCacheService,
+    private downloadRateLimiter: DownloadRateLimiterService,
     @InjectQueue('download') private downloadQueue: bull.Queue,
   ) {
     this.maxFileSizeBytes = this.configService.getNumber(
@@ -44,24 +48,25 @@ export class MessageHandler {
 
     if (!text || !userId || text.startsWith('/')) return;
 
-    if (!this.platformService.isValidUrl(text)) {
-      await ctx.reply('🔎 Send me a link from any supported platform!');
+    const extractedUrl = this.platformService.extractUrl(text);
+    if (!extractedUrl || !this.platformService.isValidUrl(extractedUrl)) {
+      await ctx.reply('❌ Invalid URL. Please send a full http/https link.');
       return;
     }
 
-    const platform = this.platformService.detectPlatform(text);
+    const platform = this.platformService.detectPlatform(extractedUrl);
     if (!platform) {
       await ctx.reply('❌ Invalid URL. Please send a valid link.');
       return;
     }
 
-    this.logger.log(`Processing ${platform} from user ${userId}: ${text}`);
+    this.logger.log(`Processing ${platform} from user ${userId}: ${extractedUrl}`);
 
     // YouTube - show quality options
     if (platform === 'youtube') {
       try {
         // Cache the URL in Redis and get short ID
-        const urlId = await this.urlCacheService.set(text);
+        const urlId = await this.urlCacheService.set(extractedUrl);
 
         const keyboard = YoutubeKeyboard.createQualityKeyboard(urlId);
         await ctx.reply('🎬 <b>Choose quality:</b>', {
@@ -75,7 +80,7 @@ export class MessageHandler {
       return;
     }
 
-    await this.processDownload(ctx, text, platform);
+    await this.processDownload(ctx, extractedUrl, platform);
   }
 
   async handleCallback(ctx: Context): Promise<void> {
@@ -162,6 +167,17 @@ export class MessageHandler {
     quality: string | undefined,
     userId: number,
   ): Promise<void> {
+    const rateLimitResult = await this.downloadRateLimiter.consume(userId);
+    if (!rateLimitResult.allowed) {
+      this.logger.warn(
+        `download_rate_limited userId=${userId} chatId=${ctx.chat?.id} retryAfter=${rateLimitResult.retryAfterSeconds ?? 0}s`,
+      );
+      await ctx.reply(
+        "⏳ You're sending requests too quickly. Please wait a bit and try again.",
+      );
+      return;
+    }
+
     const statusMsg = await ctx.reply('⬇️ Adding to download queue...');
 
     try {
@@ -191,42 +207,83 @@ export class MessageHandler {
                 quality,
                 userId,
                 statusMsg,
+                String(job.id),
               );
             } else {
-              this.logger.error(`Job ${job.id} failed: ${result.error}`);
-              await ctx.api.editMessageText(
-                ctx.chat!.id,
-                statusMsg.message_id,
-                `❌ Download failed: ${result.error}`,
-              );
+              await this.handleDownloadFailure({
+                ctx,
+                statusMsg,
+                jobId: String(job.id),
+                url,
+                platform,
+                error: result.error || 'Unknown worker failure',
+              });
             }
           } catch (error) {
-            this.logger.error(
-              `Error handling job completion for ${job.id}:`,
+            await this.handleDownloadFailure({
+              ctx,
+              statusMsg,
+              jobId: String(job.id),
+              url,
+              platform,
               error,
-            );
-            await ctx.api.editMessageText(
-              ctx.chat!.id,
-              statusMsg.message_id,
-              `❌ Error processing download result: ${error.message}`,
-            );
+            });
           }
         })
         .catch(async (error) => {
-          this.logger.error(`Job ${job.id} completion handler error:`, error);
-          await ctx.api.editMessageText(
-            ctx.chat!.id,
-            statusMsg.message_id,
-            `❌ Download job failed: ${error.message}`,
-          );
+          await this.handleDownloadFailure({
+            ctx,
+            statusMsg,
+            jobId: String(job.id),
+            url,
+            platform,
+            error,
+          });
         });
     } catch (error) {
-      this.logger.error('Failed to add job to queue:', error);
+      await this.handleDownloadFailure({
+        ctx,
+        statusMsg,
+        jobId: 'queue-add-failed',
+        url,
+        platform,
+        error,
+      });
+    }
+  }
+
+  private async handleDownloadFailure(params: {
+    ctx: Context;
+    statusMsg: { message_id: number };
+    jobId: string;
+    url: string;
+    platform: string;
+    error: unknown;
+  }): Promise<void> {
+    const { ctx, statusMsg, jobId, url, platform, error } = params;
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : JSON.stringify(error);
+
+    this.logger.error(
+      `Download failed jobId=${jobId} platform=${platform} url=${url}: ${errorMessage}`,
+    );
+
+    try {
       await ctx.api.editMessageText(
         ctx.chat!.id,
         statusMsg.message_id,
-        `❌ Failed to add download job: ${error.message}`,
+        this.downloadFailureMessage,
       );
+    } catch (editError) {
+      this.logger.error(
+        `Failed to update failure status jobId=${jobId} platform=${platform} url=${url}`,
+        editError,
+      );
+      await ctx.reply(this.downloadFailureMessage);
     }
   }
 
@@ -238,52 +295,74 @@ export class MessageHandler {
     quality: string | undefined,
     userId: number,
     statusMsg: any,
+    jobId: string,
   ): Promise<void> {
     const { results } = result;
 
-    await ctx.api.editMessageText(
-      ctx.chat!.id,
-      statusMsg.message_id,
-      '⬆️ Uploading to Telegram...',
-    );
+    try {
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        statusMsg.message_id,
+        '⬆️ Uploading to Telegram...',
+      );
 
-    const mediaGroupId = results.length > 1 ? crypto.randomUUID() : undefined;
+      const mediaGroupId = results.length > 1 ? crypto.randomUUID() : undefined;
+      const requestedHeight = this.parseRequestedHeight(quality);
+      const selectedHeight = this.getSelectedHeight(results);
 
-    for (const [mediaIndex, item] of results.entries()) {
-      const fileSize = this.storageService.getFileSize(item.filePath);
-      if (fileSize > this.maxFileSizeBytes) {
+      if (
+        platform === 'youtube' &&
+        requestedHeight !== null &&
+        selectedHeight !== null &&
+        selectedHeight < requestedHeight
+      ) {
         await ctx.reply(
-          `❌ File too large (>${this.formatBytes(this.maxFileSizeBytes)}). Skipping...`,
+          `ℹ️ Requested ${requestedHeight}p, but source provided up to ${selectedHeight}p. Sending best available quality.`,
         );
-        this.storageService.deleteFile(item.filePath);
-        continue;
       }
 
-      const message = await this.mediaSender.sendMedia(ctx, item, platform);
+      const preferDocumentForVideo =
+        platform === 'youtube' &&
+        requestedHeight !== null &&
+        requestedHeight >= 1080;
 
-      if (message) {
-        const fileId = this.mediaSender.getFileId(message);
-        const fileType = this.mediaSender.getFileType(message);
+      for (const [mediaIndex, item] of results.entries()) {
+        const fileSize = this.storageService.getFileSize(item.filePath);
+        if (fileSize > this.maxFileSizeBytes) {
+          await ctx.reply(
+            `❌ File too large (>${this.formatBytes(this.maxFileSizeBytes)}). Skipping...`,
+          );
+          continue;
+        }
 
-        if (fileId) {
-          await this.cacheService.saveMedia({
-            url,
-            platform,
-            quality,
-            media_index: mediaIndex,
-            file_id: fileId,
-            file_type: fileType,
-            media_group_id: mediaGroupId,
-            title: item.title,
-          });
+        const message = await this.mediaSender.sendMedia(ctx, item, platform, false, {
+          preferDocumentForVideo,
+        });
+
+        if (message) {
+          const fileId = this.mediaSender.getFileId(message);
+          const fileType = this.mediaSender.getFileType(message);
+
+          if (fileId) {
+            await this.cacheService.saveMedia({
+              url,
+              platform,
+              quality,
+              media_index: mediaIndex,
+              file_id: fileId,
+              file_type: fileType,
+              media_group_id: mediaGroupId,
+              title: item.title,
+            });
+          }
         }
       }
 
-      this.storageService.deleteFile(item.filePath);
+      await this.userService.incrementDownloads(userId);
+      await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id);
+    } finally {
+      this.storageService.cleanupDownloadOutputs(results, jobId);
     }
-
-    await this.userService.incrementDownloads(userId);
-    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id);
   }
 
   private formatBytes(bytes: number): string {
@@ -296,5 +375,22 @@ export class MessageHandler {
     const value = bytes / Math.pow(1024, exponent);
     const precision = exponent === 0 ? 0 : 2;
     return `${value.toFixed(precision)} ${units[exponent]}`;
+  }
+
+  private parseRequestedHeight(quality?: string): number | null {
+    if (!quality) return null;
+    const parsed = Number.parseInt(quality, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private getSelectedHeight(results: DownloadJobResult['results']): number | null {
+    if (!results || results.length === 0) return null;
+
+    const selected = results
+      .map((item) => item.selectedHeight)
+      .filter((height): height is number => Number.isFinite(height));
+
+    if (selected.length === 0) return null;
+    return Math.max(...selected);
   }
 }

@@ -23,9 +23,12 @@ export class GenericDownloadStrategy {
 
   async download(url: string, options: string[] = []): Promise<DownloadResult[]> {
     const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    const jobDir = path.join(this.storageService.getDownloadDir(), uniqueId);
+    fs.mkdirSync(jobDir, { recursive: true });
+
     const outputTemplate = path.join(
-      this.storageService.getDownloadDir(),
-      `%(title).100s-${uniqueId}.%(ext)s`
+      jobDir,
+      '%(title).100s.%(ext)s'
     );
 
     return new Promise((resolve, reject) => {
@@ -46,6 +49,7 @@ export class GenericDownloadStrategy {
       const proc = spawn('yt-dlp', args);
       let stderr = '';
       const downloadedFiles: string[] = [];
+      let selectedHeight: number | undefined;
 
       proc.stdout.on('data', (data) => {
         const output = data.toString();
@@ -54,6 +58,31 @@ export class GenericDownloadStrategy {
         // Keep only informative events (destination/merge/errors).
         if (!/\[download\]\s+\d+(\.\d+)?%/.test(output)) {
           this.logger.debug(`[${uniqueId}] ${output}`);
+        }
+
+        const selectionMatch = output.match(
+          /requested_quality=(\w+)\s+selected_format=([^\s]+)\s+height=([^\s]+)/,
+        );
+        if (selectionMatch) {
+          const requestedQuality = selectionMatch[1];
+          const selectedFormat = selectionMatch[2];
+          const selectedHeightRaw = selectionMatch[3];
+          const requestedHeight = Number.parseInt(requestedQuality, 10);
+          const parsedSelectedHeight = Number.parseInt(selectedHeightRaw, 10);
+
+          if (Number.isFinite(parsedSelectedHeight)) {
+            selectedHeight = parsedSelectedHeight;
+          }
+
+          if (
+            Number.isFinite(requestedHeight) &&
+            Number.isFinite(parsedSelectedHeight) &&
+            parsedSelectedHeight < requestedHeight
+          ) {
+            this.logger.warn(
+              `[${uniqueId}] Selected ${parsedSelectedHeight}p (format ${selectedFormat}) though ${requestedHeight}p was requested. This fallback may be caused by source availability or MAX_FILE_SIZE.`,
+            );
+          }
         }
 
         const destMatch = output.match(/\[download\] Destination: (.+)/);
@@ -74,10 +103,16 @@ export class GenericDownloadStrategy {
         stderr += data.toString();
       });
 
+      proc.on('error', (error) => {
+        this.cleanupJobDir(jobDir);
+        reject(error);
+      });
+
       proc.on('close', (code) => {
         if (code !== 0) {
           const errorMsg = this.parseError(stderr);
           this.logger.error(`Download ${uniqueId} failed: ${errorMsg}`);
+          this.cleanupJobDir(jobDir);
           reject(new Error(errorMsg));
           return;
         }
@@ -85,18 +120,21 @@ export class GenericDownloadStrategy {
         let files = downloadedFiles.filter(f => this.storageService.fileExists(f));
 
         if (files.length === 0) {
-          files = this.getLatestFiles(uniqueId);
+          files = this.getJobFiles(jobDir);
         }
 
         if (files.length === 0) {
+          this.cleanupJobDir(jobDir);
           reject(new Error('❌ Could not find media to download.'));
           return;
         }
 
         const results: DownloadResult[] = files.map(filePath => ({
           filePath,
+          jobDir,
           title: path.basename(filePath, path.extname(filePath)),
           isImage: this.storageService.isImageFile(filePath),
+          selectedHeight,
         }));
 
         this.logger.log(`Download ${uniqueId} completed with ${results.length} files`);
@@ -133,12 +171,15 @@ export class GenericDownloadStrategy {
     return `${value.toFixed(precision)} ${units[exponent]}`;
   }
 
-  private getLatestFiles(uniqueId: string): string[] {
-    const downloadDir = this.storageService.getDownloadDir();
-    return fs.readdirSync(downloadDir)
-      .filter(f => !f.startsWith('.') && !f.endsWith('.json') && f.includes(uniqueId))
-      .map(f => path.join(downloadDir, f))
+  private getJobFiles(jobDir: string): string[] {
+    return fs.readdirSync(jobDir)
+      .filter(f => !f.startsWith('.') && !f.endsWith('.json'))
+      .map(f => path.join(jobDir, f))
       .filter(f => fs.statSync(f).isFile())
       .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  }
+
+  private cleanupJobDir(jobDir: string): void {
+    this.storageService.deleteDirectory(jobDir);
   }
 }

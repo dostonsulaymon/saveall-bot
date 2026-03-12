@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as crypto from 'crypto';
 import { Media, MediaDocument } from '../../database/schemes/media.schema';
+import { buildMediaIdentityKey } from '../../common/utils/media-key.util';
 
 export interface SaveMediaDto {
   url: string;
@@ -22,7 +23,9 @@ export class MediaRepository {
   constructor(@InjectModel(Media.name) private mediaModel: Model<MediaDocument>) {}
 
   private hashUrl(url: string, quality?: string): string {
-    const content = quality ? `${url}:${quality}` : url;
+    const content = buildMediaIdentityKey(url, quality, {
+      normalizeQuality: false,
+    });
     return crypto.createHash('md5').update(content).digest('hex');
   }
 

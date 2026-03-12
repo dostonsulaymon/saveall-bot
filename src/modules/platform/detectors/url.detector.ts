@@ -17,9 +17,30 @@ export class UrlDetector {
     pinterest: /(pinterest\.com|pin\.it)/i,
   };
 
+  extractUrl(text: string): string | null {
+    const tokens = text.split(/\s+/).filter(Boolean);
+
+    for (const token of tokens) {
+      const candidate = token.replace(/^[<("'`\[]+|[>)"',.!?:;\]`]+$/g, '');
+      const parsed = this.parseHttpUrl(candidate);
+      if (parsed) {
+        return parsed.toString();
+      }
+    }
+
+    return null;
+  }
+
   detectPlatform(url: string): string | null {
+    const parsed = this.parseHttpUrl(url);
+    if (!parsed) return null;
+
+    const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const pathname = parsed.pathname.toLowerCase();
+    const target = `${hostname}${pathname}`;
+
     for (const [platform, pattern] of Object.entries(this.patterns)) {
-      if (pattern.test(url)) return platform;
+      if (pattern.test(target)) return platform;
     }
     return null;
   }
@@ -50,6 +71,18 @@ export class UrlDetector {
   }
 
   isValidUrl(text: string): boolean {
-    return /https?:\/\//i.test(text);
+    return this.parseHttpUrl(text) !== null;
+  }
+
+  private parseHttpUrl(value: string): URL | null {
+    try {
+      const parsed = new URL(value.trim());
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
   }
 }

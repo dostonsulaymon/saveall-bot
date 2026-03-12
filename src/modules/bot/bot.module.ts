@@ -21,6 +21,7 @@ import { MessageHandler } from './handlers/message.handler';
 import { MediaSender } from './services/media-sender.service';
 import { QueueModule } from '../queue/queue.module';
 import { UrlCacheService } from './services/url-cache.service';
+import { DownloadRateLimiterService } from './services/download-rate-limiter.service';
 
 @Module({
   imports: [
@@ -48,7 +49,8 @@ import { UrlCacheService } from './services/url-cache.service';
 
     // Services
     MediaSender,
-    UrlCacheService
+    UrlCacheService,
+    DownloadRateLimiterService,
   ],
   exports: [BotService],
 })

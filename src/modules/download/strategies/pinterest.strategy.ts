@@ -42,11 +42,18 @@ export class PinterestDownloadStrategy {
   }
 
   async download(url: string): Promise<DownloadResult[]> {
+    const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    const jobDir = path.join(
+      this.storageService.getDownloadDir(),
+      `pinterest-${uniqueId}`,
+    );
+    fs.mkdirSync(jobDir, { recursive: true });
+
     try {
       // FIRST: Try gallery-dl for images (primary content), if available
       if (this.galleryDlPath) {
         try {
-          const galleryResults = await this.downloadWithGalleryDl(url);
+          const galleryResults = await this.downloadWithGalleryDl(url, jobDir);
           if (galleryResults.length > 0) {
             this.logger.log(
               `Found ${galleryResults.length} images via gallery-dl`,
@@ -63,9 +70,10 @@ export class PinterestDownloadStrategy {
 
       // SECOND: Try yt-dlp for video (or as fallback)
       this.logger.log('Trying yt-dlp for Pinterest content...');
-      const ytDlpResults = await this.downloadWithYtDlp(url);
+      const ytDlpResults = await this.downloadWithYtDlp(url, jobDir);
       return ytDlpResults;
     } catch (error) {
+      this.cleanupJobDir(jobDir);
       this.logger.error('Both download methods failed:', error);
       throw new Error(
         '❌ Failed to download from Pinterest. Please try again.',
@@ -73,18 +81,19 @@ export class PinterestDownloadStrategy {
     }
   }
 
-  private async downloadWithGalleryDl(url: string): Promise<DownloadResult[]> {
+  private async downloadWithGalleryDl(
+    url: string,
+    jobDir: string,
+  ): Promise<DownloadResult[]> {
     if (!this.galleryDlPath) {
       return [];
     }
-
-    const downloadDir = this.storageService.getDownloadDir();
 
     return new Promise((resolve, reject) => {
       const args = [
         url,
         '--dest',
-        downloadDir,
+        jobDir,
         '--filename',
         '{category}_{id}.{extension}',
         '--no-mtime',
@@ -105,7 +114,7 @@ export class PinterestDownloadStrategy {
         this.logger.debug(output);
 
         // Look for downloaded files in output
-        const escapedDownloadDir = downloadDir.replace(
+        const escapedDownloadDir = jobDir.replace(
           /[-/\\^$*+?.()|[\]{}]/g,
           '\\$&',
         );
@@ -130,12 +139,13 @@ export class PinterestDownloadStrategy {
 
       proc.on('close', (code) => {
         // Even if gallery-dl fails with youtube_dl error, we still check for downloaded files
-        const allFiles = this.getAllFilesRecursively(downloadDir);
+        const allFiles = this.getAllFilesRecursively(jobDir);
         const mediaFiles = this.filterMediaFiles(allFiles);
 
         if (mediaFiles.length > 0) {
           const results: DownloadResult[] = mediaFiles.map((filePath) => ({
             filePath,
+            jobDir,
             title: path.basename(filePath, path.extname(filePath)),
             isImage: this.storageService.isImageFile(filePath),
           }));
@@ -154,11 +164,13 @@ export class PinterestDownloadStrategy {
     });
   }
 
-  private async downloadWithYtDlp(url: string): Promise<DownloadResult[]> {
-    const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+  private async downloadWithYtDlp(
+    url: string,
+    jobDir: string,
+  ): Promise<DownloadResult[]> {
     const outputTemplate = path.join(
-      this.storageService.getDownloadDir(),
-      `pinterest_${uniqueId}.%(ext)s`,
+      jobDir,
+      'pinterest.%(ext)s',
     );
 
     return new Promise((resolve, reject) => {
@@ -220,7 +232,7 @@ export class PinterestDownloadStrategy {
         );
 
         if (files.length === 0) {
-          files = this.getLatestYtDlpFiles(uniqueId);
+          files = this.getLatestYtDlpFiles(jobDir);
         }
 
         if (files.length === 0) {
@@ -230,6 +242,7 @@ export class PinterestDownloadStrategy {
 
         const results: DownloadResult[] = files.map((filePath) => ({
           filePath,
+          jobDir,
           title: path.basename(filePath, path.extname(filePath)),
           isImage: this.storageService.isImageFile(filePath),
         }));
@@ -329,16 +342,16 @@ export class PinterestDownloadStrategy {
     return results;
   }
 
-  private getLatestYtDlpFiles(uniqueId: string): string[] {
-    const downloadDir = this.storageService.getDownloadDir();
+  private getLatestYtDlpFiles(jobDir: string): string[] {
     return fs
-      .readdirSync(downloadDir)
-      .filter(
-        (f) =>
-          !f.startsWith('.') && !f.endsWith('.json') && f.includes(uniqueId),
-      )
-      .map((f) => path.join(downloadDir, f))
+      .readdirSync(jobDir)
+      .filter((f) => !f.startsWith('.') && !f.endsWith('.json'))
+      .map((f) => path.join(jobDir, f))
       .filter((f) => fs.statSync(f).isFile())
       .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  }
+
+  private cleanupJobDir(jobDir: string): void {
+    this.storageService.deleteDirectory(jobDir);
   }
 }

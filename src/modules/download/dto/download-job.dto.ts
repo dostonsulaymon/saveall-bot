@@ -1,8 +1,10 @@
 export interface DownloadResult {
   filePath: string;
+  jobDir?: string;
   title?: string;
   duration?: number;
   isImage?: boolean;
+  selectedHeight?: number;
 }
 
 export interface DownloadOptions {

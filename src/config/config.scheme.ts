@@ -27,4 +27,17 @@ export const configValidationSchema = Joi.object({
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').optional(),
-});
+  STARTUP_STRICT_DEPENDENCY_CHECKS: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .optional(),
+  DOWNLOAD_WORKER_CONCURRENCY: Joi.number().integer().min(1).default(10),
+  DOWNLOAD_RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(3),
+  DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS: Joi.number().integer().min(1).default(30),
+
+  // Bull Board (optional)
+  BULL_BOARD_USERNAME: Joi.string().allow('').optional(),
+  BULL_BOARD_PASSWORD: Joi.string().allow('').optional(),
+}).and('BULL_BOARD_USERNAME', 'BULL_BOARD_PASSWORD');

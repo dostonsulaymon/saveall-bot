@@ -5,6 +5,10 @@ import { UrlDetector } from './detectors/url.detector';
 export class PlatformService {
   constructor(private urlDetector: UrlDetector) {}
 
+  extractUrl(text: string): string | null {
+    return this.urlDetector.extractUrl(text);
+  }
+
   detectPlatform(url: string): string | null {
     return this.urlDetector.detectPlatform(url);
   }
