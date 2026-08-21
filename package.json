@@ -1,10 +1,9 @@
 {
   "name": "save-all-nest",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
-  "private": true,
-  "license": "UNLICENSED",
+  "description": "NestJS Telegram bot that downloads media from YouTube, Instagram, TikTok, X, Reddit and more",
+  "author": "Doston Sulaymon",
+  "license": "MIT",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
